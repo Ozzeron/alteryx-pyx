@@ -165,7 +165,7 @@ class Workflow:
 
     # ── Compact JSON export ─────────────────────────────────────────────────────
 
-    def to_compact_json(self) -> dict:
+    def to_compact_json(self, max_expr_len: int = 200) -> dict:
         """
         Returns a minimal dict representation of the workflow suitable for LLM context.
         Format: {tool_id: {plugin, annotation, key_config}} plus a connections list.
@@ -185,7 +185,7 @@ class Workflow:
                     annotation = (ann.get('DefaultAnnotationText') or ann.get('Name') or '')
 
             # Key config — extract the most useful bits per tool type
-            key_config = _extract_key_config(tool)
+            key_config = _extract_key_config(tool, max_expr_len=max_expr_len)
 
             tools_out[str(tid)] = {
                 'plugin': plugin,
@@ -375,7 +375,7 @@ class Workflow:
 
 # ── Helper: compact config extraction ──────────────────────────────────────────
 
-def _extract_key_config(tool: Tool) -> Optional[dict]:
+def _extract_key_config(tool: Tool, max_expr_len: int = 200) -> Optional[dict]:
     """Extract the most informative config fields for LLM-friendly compact JSON."""
     from .formulatool import FormulaTool
     from .jointool import JoinTool
@@ -394,7 +394,8 @@ def _extract_key_config(tool: Tool) -> Optional[dict]:
 
     if isinstance(tool, FormulaTool):
         formulas = tool.formulas
-        return {'formulas': [{'field': f.field, 'expr': f.expression} for f in formulas]}
+        def _trunc(s): return s if len(s) <= max_expr_len else s[:max_expr_len] + '...'
+        return {'formulas': [{'field': f.field, 'expr': _trunc(f.expression)} for f in formulas]}
 
     if isinstance(tool, JoinTool):
         return {'left_keys': tool.left_keys, 'right_keys': tool.right_keys}
@@ -424,7 +425,10 @@ def _extract_key_config(tool: Tool) -> Optional[dict]:
         try:
             mode = str(tool.filter_mode)
             if mode == 'Custom':
-                return {'mode': mode, 'expression': tool.expression}
+                expr = str(tool.expression or '')
+                if len(expr) > max_expr_len:
+                    expr = expr[:max_expr_len] + f'... [{len(expr)} chars]'
+                return {'mode': mode, 'expression': expr}
             return {'mode': mode}
         except Exception:
             pass
@@ -439,5 +443,5 @@ def _extract_key_config(tool: Tool) -> Optional[dict]:
     simple = {}
     for k, v in cfg.items():
         if isinstance(v, str) and not k.startswith('@'):
-            simple[k] = v
+            simple[k] = v if len(v) <= max_expr_len else v[:max_expr_len] + f'... [{len(v)} chars]'
     return simple or None
