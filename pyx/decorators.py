@@ -14,14 +14,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from functools import wraps
+import functools
 
 
 def newobj(method):
-    @wraps(method)
-    def inner(self, *args, **kwargs):
-        obj = self.__class__.__new__(self.__class__)
-        obj.__dict__ = self.__dict__.copy()
-        method(obj, *args, **kwargs)
-        return obj
-    return inner
+    """Decorator that makes a method mutable and chainable (returns self).
+
+    Previously this decorator shallow-copied __dict__ to simulate immutability,
+    but that caused all mutable members (dicts, lists) to be shared across
+    copies.  The API is now cleanly mutable: each decorated method mutates self
+    and returns self, enabling call-chaining.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        method(self, *args, **kwargs)
+        return self
+    return wrapper

@@ -67,7 +67,7 @@ class FormulaTool(Tool):
                 expression=f.get('@expression', ''),
                 type=f.get('@type', 'V_String'),
                 size=f.get('@size', '2147483647'),
-                enabled=f.get('@enabled', 'true').lower() != 'false' if '@enabled' in f else True,
+                enabled=(lambda raw: (raw if isinstance(raw, str) else 'true').lower() != 'false')(f.get('@enabled', 'true')),
             ))
         return result
 

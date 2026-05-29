@@ -139,14 +139,14 @@ class Tool:
         return self.is_source() and self.is_sink()
 
     @newobj
-    def add_input(self, tool_id: str, output: str, input: str) -> '__class__':
+    def add_input(self, tool_id: int, output: str, input: str) -> 'Tool':
         if self._can_have_input:
             self.inputs.append(ToolConnection(tool_id=tool_id, output=output, input=input))
         else:
             raise RuntimeWarning(f"Cannot add an input to a {type(self).__name__}")
 
     @newobj
-    def add_output(self, tool_id: str, output: str, input: str) -> '__class__':
+    def add_output(self, tool_id: int, output: str, input: str) -> 'Tool':
         if self._can_have_output:
             self.outputs.append(ToolConnection(tool_id=tool_id, output=output, input=input))
         else:
@@ -177,7 +177,11 @@ class Tool:
         return root
 
     def __repr__(self) -> str:
+        return f"<{type(self).__name__} id={self.tool_id} plugin={self.plugin!r} pos=({self.position.x},{self.position.y})>"
+
+    def to_pretty_xml(self) -> str:
+        """Returns the full pretty-printed XML representation of this tool node."""
         xml = self.toxml()
         text = ET.tostring(xml, 'utf-8')
         parsed = minidom.parseString(text)
-        return parsed.toprettyxml(indent='  ').replace('&quot;', '"')
+        return parsed.toprettyxml(indent='  ')

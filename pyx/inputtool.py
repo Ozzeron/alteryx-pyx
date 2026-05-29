@@ -19,6 +19,22 @@ from typing import Dict, Any
 from .tool import Tool
 
 
+def _xml_bool(v, default=False):
+    """Parse bool from XML string value. bool('False') == True in Python!"""
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    return s in ('true', '1', 'yes')
+
+
+def _xml_bool(v, default=False):
+    """Parse bool from XML string value. bool('False') == True in Python!"""
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    return s in ('true', '1', 'yes')
+
+
 class InputTool(Tool):
     """
     Represents an Input tool in an Alteryx workflow.
@@ -50,7 +66,7 @@ class InputTool(Tool):
 
     @property
     def search_sub_dirs(self) -> bool:
-        return bool(self._file_config['SearchSubDirs'])
+        return _xml_bool(self._file_config.get('SearchSubDirs'))
 
     @search_sub_dirs.setter
     def search_sub_dirs(self, value: bool) -> None:
@@ -82,7 +98,7 @@ class InputTool(Tool):
 
     @property
     def ignore_errors(self) -> bool:
-        return bool(self._format_specific_options['IgnoreErrors']['#text'])
+        return _xml_bool(self._format_specific_options.get('IgnoreErrors'))
 
     @ignore_errors.setter
     def ignore_errors(self, value: bool) -> None:
@@ -98,7 +114,7 @@ class InputTool(Tool):
 
     @property
     def allow_shared_write(self) -> bool:
-        return bool(self._format_specific_options['AllowShareWrite']['#text'])
+        return _xml_bool(self._format_specific_options.get('AllowShareWrite'))
 
     @allow_shared_write.setter
     def allow_shared_write(self, value: bool) -> None:
@@ -106,7 +122,7 @@ class InputTool(Tool):
 
     @property
     def header_row(self) -> bool:
-        return bool(self._format_specific_options['HeaderRow']['#text'])
+        return _xml_bool(self._format_specific_options.get('HeaderRow'))
 
     @header_row.setter
     def header_row(self, value: bool) -> None:
@@ -127,6 +143,23 @@ class InputTool(Tool):
     @import_line.setter
     def import_line(self, value: int) -> None:
         self._format_specific_options['ImportLine']['#text'] = str(value)
+
+
+    @property
+    def single_thread_read(self) -> bool:
+        return _xml_bool(self._format_specific_options.get('SingleThreadRead'))
+
+    @single_thread_read.setter
+    def single_thread_read(self, value: bool) -> None:
+        self._format_specific_options['SingleThreadRead'] = str(value)
+
+    @property
+    def quote_record_break(self) -> bool:
+        return _xml_bool(self._format_specific_options.get('QuoteRecordBreak'))
+
+    @quote_record_break.setter
+    def quote_record_break(self, value: bool) -> None:
+        self._format_specific_options['QuoteRecordBreak'] = str(value)
 
     @property
     def _file_config(self) -> Dict[str, Any]:

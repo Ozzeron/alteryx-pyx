@@ -30,3 +30,12 @@ class SortTool(Tool):
         self.plugin = 'AlteryxBasePluginsGui.Sort.Sort'
         self.engine_dll = 'AlteryxBasePluginsEngine.dll'
         self.engine_dll_entry_point = 'AlteryxSort'
+    @property
+    def sort_fields(self) -> list:
+        """Returns list of (field_name, order) where order is 'Ascending' or 'Descending'."""
+        cfg = self.properties.get('Configuration', {}) if self.properties else {}
+        sort_info = cfg.get('SortInfo', {})
+        fields = sort_info.get('Field', [])
+        if isinstance(fields, dict):
+            fields = [fields]
+        return [(f.get('@field', ''), f.get('@order', 'Ascending')) for f in fields]

@@ -18,7 +18,9 @@
 import os
 import subprocess
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any, Optional
+from collections import Counter
+from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Callable
 from xml.dom import minidom
 import xmltodict
 
@@ -28,6 +30,14 @@ from .tool import Tool, ToolPosition
 from .tool_factory import ToolFactory
 from .containertool import ContainerTool
 from .macrotool import MacroTool
+
+
+@dataclass
+class Issue:
+    severity: str   # 'error' | 'warning' | 'info'
+    tool_id: Optional[int]
+    code: str
+    message: str
 
 
 class Workflow:
@@ -150,13 +160,35 @@ class Workflow:
 
     # ── Query helpers ───────────────────────────────────────────────────────────
 
-    def get_tools_by_plugin(self, plugin_name: str) -> List[Tool]:
-        """Returns all tools with the given plugin name (case-insensitive suffix match ok)."""
-        result = []
-        for tool in self._tools.values():
-            if tool.plugin == plugin_name or tool.plugin.endswith(plugin_name):
-                result.append(tool)
-        return result
+    def get_tools_by_plugin(self, plugin_name: str, *, exact: bool = False) -> List[Tool]:
+        """Returns all tools with the given plugin name.
+
+        By default performs last-segment matching so that e.g. 'Join' matches
+        'AlteryxBasePluginsGui.Join.Join' but NOT 'CalgaryJoin'.
+        Pass exact=True or include '.' in plugin_name to force an exact match.
+        """
+        if exact or '.' in plugin_name:
+            return [t for t in self._tools.values() if t.plugin == plugin_name]
+        return [t for t in self._tools.values()
+                if t.plugin.rsplit('.', 1)[-1] == plugin_name]
+
+    def get_macros(self, macro_path: Optional[str] = None) -> List['MacroTool']:
+        """Returns all MacroTool instances, optionally filtered by macro_path."""
+        tools = [t for t in self._tools.values() if isinstance(t, MacroTool)]
+        if macro_path:
+            tools = [t for t in tools if t.macro_path == macro_path]
+        return tools
+
+    def get_containers(self, *, include_disabled: bool = True) -> List['ContainerTool']:
+        """Returns all ContainerTool instances, optionally excluding disabled ones."""
+        tools = [t for t in self._tools.values() if isinstance(t, ContainerTool)]
+        if not include_disabled:
+            tools = [t for t in tools if not t.disabled]
+        return tools
+
+    def find(self, tool_id: int) -> Optional[Tool]:
+        """Returns the tool with the given ID, or None if not found."""
+        return self._tools.get(tool_id)
 
     def get_tools_in_container(self, container_id: int) -> List[Tool]:
         """Returns all tools whose container_id matches the given container tool ID."""
@@ -165,12 +197,14 @@ class Workflow:
 
     # ── Compact JSON export ─────────────────────────────────────────────────────
 
-    def to_compact_json(self, max_expr_len: int = 200) -> dict:
+    def to_compact_json(self, max_expr_len: int = 200, include_positions: bool = True) -> dict:
         """
         Returns a minimal dict representation of the workflow suitable for LLM context.
         Format: {tool_id: {plugin, annotation, key_config}} plus a connections list.
         Much smaller than the full XML.
         """
+        from .inputtool import InputTool
+
         tools_out = {}
         for tid, tool in self._tools.items():
             plugin = tool.plugin or (
@@ -189,7 +223,8 @@ class Workflow:
 
             tools_out[str(tid)] = {
                 'plugin': plugin,
-                'pos': f"{tool.position.x},{tool.position.y}",
+                'container': getattr(tool, 'container_id', None),
+                'pos': f"{tool.position.x},{tool.position.y}" if include_positions else None,
                 'annotation': annotation or None,
                 'config': key_config or None,
             }
@@ -202,9 +237,20 @@ class Workflow:
             for c in self._connections
         ]
 
+        plugin_counts = Counter(
+            t.plugin.rsplit('.', 1)[-1] if t.plugin else 'macro'
+            for t in self._tools.values()
+        )
+
         return {
+            '_schema': 'pyx.compact/v1',
             'name': self._name,
             'version': self._yxmd_version,
+            'summary': {
+                'tool_count': len(self._tools),
+                'connection_count': len(self._connections),
+                'plugin_counts': dict(plugin_counts.most_common(15)),
+            },
             'tools': tools_out,
             'connections': connections_out,
         }
@@ -231,10 +277,165 @@ class Workflow:
         return ayx_doc
 
     def __repr__(self) -> str:
+        return f"<Workflow name={self.name!r} tools={len(self._tools)} connections={len(self._connections)}>"
+
+    def to_pretty_xml(self) -> str:
+        """Returns the full pretty-printed XML representation of the workflow."""
         xml = self.toxml()
         text = ET.tostring(xml, 'utf-8')
         parsed = minidom.parseString(text)
-        return parsed.toprettyxml(indent='  ').replace('&quot;', '"')
+        return parsed.toprettyxml(indent='  ')
+
+    # ── validate() ───────────────────────────────────────────────────────────
+
+    def validate(self) -> list:
+        """Validate the workflow and return a list of Issues (errors, warnings, info)."""
+        from .inputtool import InputTool
+        from .browsetool import BrowseTool
+        from .textboxtool import TextBoxTool
+        from .outputtool import OutputTool
+
+        issues = []
+
+        # Check for broken connections (referencing non-existent tool IDs)
+        for conn in self._connections:
+            if conn.origin_tool_id not in self._tools:
+                issues.append(Issue('error', conn.origin_tool_id, 'broken-conn',
+                    f"Connection from tool {conn.origin_tool_id} but tool doesn't exist"))
+            if conn.destination_tool_id not in self._tools:
+                issues.append(Issue('error', conn.destination_tool_id, 'broken-conn',
+                    f"Connection to tool {conn.destination_tool_id} but tool doesn't exist"))
+
+        # Check for duplicate tool IDs (shouldn't happen via normal API, but catches corrupt XML)
+        seen = set()
+        for tid in self._tools:
+            if tid in seen:
+                issues.append(Issue('error', tid, 'dup-id', f"Duplicate tool ID {tid}"))
+            seen.add(tid)
+
+        # Check for orphan tools (no connections, not Input/Browse/TextBox/TextInput)
+        connected_ids = set()
+        for conn in self._connections:
+            connected_ids.add(conn.origin_tool_id)
+            connected_ids.add(conn.destination_tool_id)
+        for tid, tool in self._tools.items():
+            if tid not in connected_ids and not isinstance(tool, (InputTool, BrowseTool, TextBoxTool, MacroTool)):
+                try:
+                    from .textinputtool import TextInputTool
+                    if isinstance(tool, TextInputTool):
+                        continue
+                except ImportError:
+                    pass
+                issues.append(Issue('warning', tid, 'orphan',
+                    f"Tool {tid} ({tool.plugin}) has no connections"))
+
+        # Check for disabled Output tools
+        for tid, tool in self._tools.items():
+            if isinstance(tool, OutputTool):
+                try:
+                    if tool.disabled:
+                        fname = ''
+                        try:
+                            fname = tool.output_file_name
+                        except Exception:
+                            pass
+                        issues.append(Issue('warning', tid, 'disabled-output',
+                            f"Output tool {tid} is DISABLED — file will not be written: {fname}"))
+                except Exception:
+                    pass
+
+        # Check for containers whose children don't exist in workflow
+        for tid, tool in self._tools.items():
+            if isinstance(tool, ContainerTool):
+                for child_id in tool.children:
+                    if child_id not in self._tools:
+                        issues.append(Issue('error', tid, 'missing-child',
+                            f"Container {tid} references child {child_id} which doesn't exist"))
+
+        return issues
+
+    # ── rewrite_paths() ────────────────────────────────────────────────────
+
+    def rewrite_paths(self, mapping, *, dry_run=False):
+        """
+        Rewrite file paths in all Input, Output, CalgaryJoin, and Macro tools.
+
+        mapping: dict of {old_prefix: new_prefix} or a callable(old_path) -> new_path
+        dry_run: if True, return what would change without changing it
+        Returns: list of (tool_id, old_path, new_path) for all changed paths
+        """
+        from .inputtool import InputTool
+        from .outputtool import OutputTool
+        from .calgaryjointool import CalgaryJoinTool
+
+        if isinstance(mapping, dict):
+            _map = mapping
+            def rewrite(path):
+                for old, new in _map.items():
+                    if old in path:
+                        return path.replace(old, new)
+                return path
+        else:
+            rewrite = mapping
+
+        changes = []
+
+        for tid, tool in self._tools.items():
+            if isinstance(tool, InputTool):
+                try:
+                    old = tool.input_file_name
+                    new = rewrite(old)
+                    if new != old:
+                        changes.append((tid, old, new))
+                        if not dry_run:
+                            cfg = tool.properties.get('Configuration', {})
+                            file_node = cfg.get('File', {})
+                            if isinstance(file_node, dict):
+                                file_node['#text'] = new
+                            else:
+                                cfg['File'] = new
+                except Exception:
+                    pass
+
+            if isinstance(tool, OutputTool):
+                try:
+                    cfg = tool.properties.get('Configuration', {}) if tool.properties else {}
+                    file_node = cfg.get('File', {})
+                    old = file_node.get('#text', '') if isinstance(file_node, dict) else str(file_node or '')
+                    new = rewrite(old)
+                    if new != old:
+                        changes.append((tid, old, new))
+                        if not dry_run:
+                            if isinstance(file_node, dict):
+                                file_node['#text'] = new
+                            else:
+                                cfg['File'] = new
+                except Exception:
+                    pass
+
+            if isinstance(tool, CalgaryJoinTool):
+                try:
+                    old = tool.root_file_name
+                    new = rewrite(old)
+                    if new != old:
+                        changes.append((tid, old, new))
+                        if not dry_run:
+                            tool.root_file_name = new
+                except Exception:
+                    pass
+
+            if isinstance(tool, MacroTool):
+                try:
+                    old = tool.macro_path
+                    new = rewrite(old)
+                    if new != old:
+                        changes.append((tid, old, new))
+                        if not dry_run:
+                            tool.macro_path = new
+                except Exception:
+                    pass
+
+        return changes
 
     # ── Static methods ──────────────────────────────────────────────────────────
 
@@ -243,8 +444,8 @@ class Workflow:
         """Writes the workflow to a file."""
         if not overwrite and os.path.isfile(filename):
             raise FileExistsError(f"File '{filename}' already exists and overwrite is false")
-        with open(filename, 'w') as f:
-            f.write(str(workflow))
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(workflow.to_pretty_xml())
 
     @staticmethod
     def read(filename: str) -> 'Workflow':
@@ -252,7 +453,7 @@ class Workflow:
         workflow = Workflow()
         workflow.filename = filename
 
-        with open(filename) as wf:
+        with open(filename, encoding='utf-8') as wf:
             xml = xmltodict.parse(wf.read())
 
         ayx_doc = xml['AlteryxDocument']
@@ -373,7 +574,7 @@ class Workflow:
         process.wait()
 
 
-# ── Helper: compact config extraction ──────────────────────────────────────────
+# ── Helper: compact config extraction ───────────────────────────────────────────────────
 
 def _extract_key_config(tool: Tool, max_expr_len: int = 200) -> Optional[dict]:
     """Extract the most informative config fields for LLM-friendly compact JSON."""
@@ -387,6 +588,14 @@ def _extract_key_config(tool: Tool, max_expr_len: int = 200) -> Optional[dict]:
     from .recordidtool import RecordIDTool
     from .filtertool import FilterTool
     from .generaterowstool import GenerateRowsTool
+    from .browsetool import BrowseTool
+    from .inputtool import InputTool
+    from .outputtool import OutputTool
+    from .sorttool import SortTool
+
+    # QW4: BrowseTool TempFile paths are ephemeral engine scratch — not useful
+    if isinstance(tool, BrowseTool):
+        return None
 
     cfg = tool.properties.get('Configuration', {}) if tool.properties else {}
     if not cfg:
@@ -430,14 +639,80 @@ def _extract_key_config(tool: Tool, max_expr_len: int = 200) -> Optional[dict]:
                     expr = expr[:max_expr_len] + f'... [{len(expr)} chars]'
                 return {'mode': mode, 'expression': expr}
             return {'mode': mode}
-        except Exception:
-            pass
+        except Exception as exc:
+            return {'filter_error': str(exc)}
 
     if isinstance(tool, GenerateRowsTool):
         return {'init': tool.init_expr, 'cond': tool.cond_expr, 'loop': tool.loop_expr}
 
     if isinstance(tool, MacroTool):
         return {'macro': tool.macro_path, 'values': tool.macro_values}
+
+    # QW6: InputTool file paths
+    if isinstance(tool, InputTool):
+        try:
+            return {
+                'file': tool.input_file_name,
+                'format': tool.file_format,
+                'record_limit': tool.record_limit,
+            }
+        except Exception:
+            pass
+
+    # QW6: OutputTool file paths
+    if isinstance(tool, OutputTool):
+        try:
+            file_raw = cfg.get('File', {})
+            file_path = file_raw.get('#text', '') if isinstance(file_raw, dict) else str(file_raw or '')
+            disabled = str(cfg.get('Disable', 'False')).lower() == 'true'
+            return {'file': file_path, 'disabled': disabled}
+        except Exception:
+            pass
+
+    # QW9: SortTool sort fields
+    if isinstance(tool, SortTool):
+        try:
+            return {'sort_fields': tool.sort_fields}
+        except Exception:
+            pass
+
+    # Phase 3: TextInputTool
+    try:
+        from .textinputtool import TextInputTool
+        if isinstance(tool, TextInputTool):
+            try:
+                preview = tool.preview_rows(3)
+                return {'columns': tool.columns, 'row_count': tool.num_rows, 'preview': preview}
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    # Phase 3: AppendFieldsTool
+    try:
+        from .appendfieldstool import AppendFieldsTool
+        if isinstance(tool, AppendFieldsTool):
+            try:
+                return {'cartesian_mode': tool.cartesian_mode}
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    # Phase 3: CrossTabTool
+    try:
+        from .crosstabtool import CrossTabTool
+        if isinstance(tool, CrossTabTool):
+            try:
+                return {
+                    'group_fields': tool.group_fields,
+                    'header': tool.header_field,
+                    'data': tool.data_field,
+                }
+            except Exception:
+                pass
+    except ImportError:
+        pass
 
     # Generic fallback: grab simple string values from config
     simple = {}

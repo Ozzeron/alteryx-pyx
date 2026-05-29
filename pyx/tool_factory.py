@@ -38,6 +38,9 @@ from .textboxtool import TextBoxTool
 from .containertool import ContainerTool
 from .calgaryjointool import CalgaryJoinTool
 from .macrotool import MacroTool
+from .textinputtool import TextInputTool
+from .appendfieldstool import AppendFieldsTool
+from .crosstabtool import CrossTabTool
 
 
 class ToolFactory:
@@ -67,6 +70,10 @@ class ToolFactory:
         'AlteryxGuiToolkit.TextBox.TextBox': TextBoxTool,
         'AlteryxGuiToolkit.ToolContainer.ToolContainer': ContainerTool,
         'CalgaryPluginsGui.CalgaryJoin.CalgaryJoin': CalgaryJoinTool,
+        # Extended tools
+        'AlteryxBasePluginsGui.TextInput.TextInput': TextInputTool,
+        'AlteryxBasePluginsGui.AppendFields.AppendFields': AppendFieldsTool,
+        'AlteryxBasePluginsGui.CrossTab.CrossTab': CrossTabTool,
     }
 
     @staticmethod

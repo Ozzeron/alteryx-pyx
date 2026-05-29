@@ -49,7 +49,11 @@ class SelectTool(Tool):
 
     @newobj
     def set_select_field(self, field: str, selected: bool) -> '__class__':
-        pass
+        """Not yet implemented — use .properties directly to modify SelectFields."""
+        raise NotImplementedError(
+            "set_select_field is not yet implemented. "
+            "Modify self.properties['Configuration']['SelectFields'] directly."
+        )
 
     @newobj
     def remove_select_field(self, field: str) -> '__class__':
