@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "alteryx-pyx"
+version = "0.2.0"
+description = "Python library for reading, writing, and analyzing Alteryx Designer workflow files (.yxmd)"
+license = { text = "GPL-3.0-only" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "xmltodict",
+]
+keywords = ["alteryx", "workflow", "etl", "automation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Source = "https://github.com/Ozzeron/alteryx-pyx"
+Original = "https://github.com/davidtwilcox/pyx"
