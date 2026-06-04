@@ -28,6 +28,8 @@ class Connection:
     origin_output: str = ''
     destination_tool_id: int = 0
     destination_input: str = ''
+    name: str = ''            # ordinal / wireless label, e.g. "#1"
+    wireless: bool = False    # <Connection ... Wireless="True">
 
     def toxml(self) -> ET.Element:
         """Returns an XML representation of the connection.
@@ -36,6 +38,10 @@ class Connection:
         root = ET.Element('root')
 
         connection = ET.SubElement(root, 'Connection')
+        if self.name:
+            connection.set('name', self.name)
+        if self.wireless:
+            connection.set('Wireless', 'True')
 
         origin = ET.SubElement(connection, 'Origin')
         origin.set('ToolID', str(self.origin_tool_id))

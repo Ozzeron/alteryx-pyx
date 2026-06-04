@@ -453,8 +453,19 @@ class Workflow:
         workflow = Workflow()
         workflow.filename = filename
 
-        with open(filename, encoding='utf-8') as wf:
-            xml = xmltodict.parse(wf.read())
+        # Alteryx often writes windows-1252 without declaring encoding in the XML.
+        with open(filename, 'rb') as fh:
+            data = fh.read()
+        text = None
+        for enc in ('utf-8-sig', 'cp1252'):      # utf-8-sig also strips a BOM
+            try:
+                text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:                          # last resort — do not crash
+            text = data.decode('utf-8', errors='replace')
+        xml = xmltodict.parse(text)
 
         ayx_doc = xml['AlteryxDocument']
 
@@ -529,6 +540,12 @@ class Workflow:
             if container_id is not None:
                 tool.container_id = container_id  # type: ignore[attr-defined]
 
+            if tool_id in workflow.tools:
+                import warnings
+                warnings.warn(
+                    f"Duplicate ToolID {tool_id}: previous node overwritten "
+                    f"({workflow.tools[tool_id].plugin!r} -> {getattr(tool, 'plugin', '')!r})",
+                    stacklevel=2)
             workflow.tools[tool_id] = tool
 
         for node in raw_nodes:
@@ -551,7 +568,9 @@ class Workflow:
                 dest_conn = destination.get('@Connection', 'Input')
 
                 workflow.connections.append(
-                    Connection(origin_tool_id, origin_conn, dest_tool_id, dest_conn)
+                    Connection(origin_tool_id, origin_conn, dest_tool_id, dest_conn,
+                               name=connection.get('@name', ''),
+                               wireless=str(connection.get('@Wireless', 'False')).lower() == 'true')
                 )
 
                 if origin_tool_id in workflow.tools:

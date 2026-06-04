@@ -134,3 +134,7 @@ dmypy.json
 test.py
 workflows/*-Output.yxmd
 workflows/*.bak
+
+# Local audit / verification scratch scripts
+_audit_*.py
+_verify_*.py
